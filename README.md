@@ -34,14 +34,14 @@ The mechanism is twofold:
    covers use cases like `nix shell nixpkgs#<package>`, `nix run
    nixpkgs#<package>` etc.
 
- - Ensure this version of nixpkgs is in the nix store, and write out a
-   `~/.nix-path` file containing:
+ - Ensure this version of nixpkgs is in the nix store, and add a per-user gcroot
+   to preserve it across garbage collection, and write out a
+   `~/.nix-path` file that updates `NIX_PATH` with the appropriate `nixpkgs=`
+   entry.
 
-       export NIX_PATH=nixpkgs=/nix/store/...
-
-   This means that if you have a shell like bash or zsh, and source
-   `~/.nix-env`, you are also covered for the `nix-shell` and `import <nixpkgs>`
-   cases above.
+   This means that if you source `~/.nix-env` from your `~/.zshrc`, you are also
+   covered for the `nix-shell` and `import <nixpkgs>` cases above. (Note:
+   currently this is limited to zsh.)
 
 This explanation was all in the mainline case (nixpkgs specifically, with a
 local `flake.lock` file, using the user nix registry), but you can override

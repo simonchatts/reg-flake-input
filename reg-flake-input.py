@@ -6,7 +6,7 @@
 #
 # simonchatts, Dec 2021
 
-import argparse, json, pathlib, subprocess, sys
+import argparse, getpass, json, os, pathlib, subprocess, sys
 
 # User registry file
 REG_FILE = pathlib.Path.home() / ".config" / "nix" / "registry.json"
@@ -87,6 +87,8 @@ def update_nix_path(entry):
     This is just for things like nix-shell using import <nixpkgs>,
     and assumes this is a nixpkgs rev from GitHub.
     """
+    # First do a nix-prefetch-url, to either confirm this is already downloaded
+    # by the hash, or download it, and either way provide a nix store path.
     url = f'https://github.com/{entry["owner"]}/{entry["repo"]}/archive/{entry["rev"]}.zip'
     r = subprocess.run(
         [
@@ -100,14 +102,62 @@ def update_nix_path(entry):
         ],
         stdout=subprocess.PIPE,
     )
-    if r.returncode == 0:
-        nixpkgs = r.stdout.decode("ascii").split("\n")[1]
-        with open(pathlib.Path.home() / ".nix-path", "w") as f:
-            f.write(f"export NIX_PATH=nixpkgs={nixpkgs}")
-    else:
+    # Treat failures in this function as non-fatal, and just bug out with an
+    # error message, for slightly arbitrary reasons.
+    if r.returncode != 0:
         print(
             "Warning: skipping NIX_PATH update, since unable "
-            + f"to download nixpkgs: {r}"
+            + f"to download nixpkgs: {r}",
+            file=sys.stderr,
+        )
+        return
+
+    # OK, we have a valid nix store path for our nixpkgs. First add a gcroot so
+    # things hangs around:
+    nixpkgs_path = r.stdout.decode("ascii").split("\n")[1]
+    gcroot_path = (
+        f"/nix/var/nix/gcroots/per-user/{getpass.getuser()}/reg-flake-input-nixpkgs"
+    )
+    # Unconditionally delete any previous entry...
+    try:
+        os.remove(gcroot_path)
+    except Exception:
+        pass
+    # ... before writing a new symlink
+    try:
+        os.symlink(
+            nixpkgs_path,
+            gcroot_path,
+            target_is_directory=True,
+        )
+    except Exception as e:
+        print(f"Error adding {gcroot_path}: {e}", file=sys.stderr)
+
+    # Secondly, write out a .nix-path file for setting NIX_PATH.
+    # @@@ Should handle non-zsh shells
+    with open(pathlib.Path.home() / ".nix-path", "w") as f:
+        f.write(
+            f"""\
+if [[ "${{SHELL##*/}}" == zsh ]]; then
+    # Array version of existing NIX_PATH
+    if [ -z "$NIX_PATH" ]; then
+        typeset -a np
+    else
+        IFS=: read -A np <<<"$NIX_PATH" # for bash: -a not -A
+    fi
+
+    (( nixpkgs_index = $#np + 1 ))
+    for ((i = 1; i <= $#np; i++)); do
+        if [[ "${{np[$i]%=*}}" == nixpkgs ]]; then
+            nixpkgs_index=$i
+        fi
+    done
+    np[$nixpkgs_index]=("nixpkgs={nixpkgs_path}")
+
+    # Finally set NIX_PATH
+    export NIX_PATH=$(print -R ${{(j|:|)np}})
+fi
+"""
         )
 
 
