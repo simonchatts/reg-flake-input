@@ -152,6 +152,7 @@ if [[ "${{SHELL##*/}}" == zsh ]]; then
             nixpkgs_index=$i
         fi
     done
+    unset i
     np[$nixpkgs_index]=("nixpkgs={nixpkgs_path}")
 
     # Finally set NIX_PATH
