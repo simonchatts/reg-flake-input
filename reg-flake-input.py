@@ -6,7 +6,13 @@
 #
 # simonchatts, Dec 2021
 
-import argparse, getpass, json, os, pathlib, subprocess, sys
+import argparse
+import getpass
+import json
+import os
+import pathlib
+import subprocess
+import sys
 
 # User registry file
 REG_FILE = pathlib.Path.home() / ".config" / "nix" / "registry.json"
@@ -56,11 +62,11 @@ def get_current_registry(args):
         reg = json.load(open(args.registry_file))
         assert reg["version"] == 2
         # Remove the specified entry if already present
-        for (idx, flake) in enumerate(reg["flakes"]):
+        for idx, flake in enumerate(reg["flakes"]):
             if flake["from"]["id"] == args.entry_name:
                 reg["flakes"].pop(idx)
                 break
-    except Exception as e:
+    except Exception:
         reg = {"version": 2, "flakes": []}
     return reg
 
@@ -89,7 +95,7 @@ def update_nix_path(entry):
     """
     # First do a nix-prefetch-url, to either confirm this is already downloaded
     # by the hash, or download it, and either way provide a nix store path.
-    url = f'https://github.com/{entry["owner"]}/{entry["repo"]}/archive/{entry["rev"]}.zip'
+    url = f"https://github.com/{entry['owner']}/{entry['repo']}/archive/{entry['rev']}.zip"
     r = subprocess.run(
         [
             "nix-prefetch-url",
@@ -162,6 +168,36 @@ fi
         )
 
 
+def get_entry_from_lock(lock_file, entry_name, lock_file_name):
+    """
+    Resolve a flake input entry from a flake.lock file.
+
+    Prefer resolving via nodes.root.inputs[entry_name] to find the node
+    currently wired into the root flake input graph, then fall back to a
+    direct node lookup for older/simple lock files.
+    """
+    try:
+        root_inputs = lock_file["nodes"]["root"]["inputs"]
+        node_name = root_inputs.get(entry_name)
+    except Exception:
+        node_name = None
+
+    if node_name is None:
+        node_name = entry_name
+
+    try:
+        return lock_file["nodes"][node_name]["locked"]
+    except KeyError:
+        if node_name == entry_name:
+            msg = f"Error: no such entry name '{entry_name}' found in {lock_file_name}"
+        else:
+            msg = (
+                f"Error: input '{entry_name}' resolves to node '{node_name}' "
+                + f"but no locked entry was found in {lock_file_name}"
+            )
+        sys.exit(msg + "\n(Just omitting this argument assumes 'nixpkgs')")
+
+
 def main():
     "Run the application"
     sys.tracebacklimit = 0
@@ -173,13 +209,7 @@ def main():
             f"Error: unable to open flake.lock file: {e}\n"
             + "(Just omitting this argument assumes 'flake.lock' in the current directory)"
         )
-    try:
-        entry = lock_file["nodes"][args.entry_name]["locked"]
-    except KeyError:
-        sys.exit(
-            f"Error: no such entry name '{args.entry_name}' found in {args.lock_file}\n"
-            + "(Just omitting this argument assumes 'nixpkgs')"
-        )
+    entry = get_entry_from_lock(lock_file, args.entry_name, args.lock_file)
     reg = get_current_registry(args)
     update_registry(reg, entry, args)
     if args.entry_name == "nixpkgs" and entry["type"] == "github":
